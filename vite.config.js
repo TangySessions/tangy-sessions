@@ -114,7 +114,11 @@ function assertNoSecretInBrowserEnv(env) {
 
 // https://vite.dev/config/
 export default defineConfig(({ command, mode }) => {
-  const env = loadEnv(mode, process.cwd(), '')
+  // TANGY_ENV_DIR points Vite at another folder for .env files (both for the
+  // guards below and for what the bundle receives). scripts/test-build-guards.mjs
+  // uses an empty folder so a developer's .env.local can't change its results.
+  const envDir = process.env.TANGY_ENV_DIR || process.cwd()
+  const env = loadEnv(mode, envDir, '')
   assertNoSecretInBrowserEnv(env)
   // Production unless the build explicitly says otherwise (build-guards.js) —
   // the same on Vercel, Azure or any other host.
@@ -132,6 +136,7 @@ export default defineConfig(({ command, mode }) => {
   const demoAdmin = demo.enabled
   const reviewMode = review.enabled
   return {
+    envDir,
     plugins: [react(), tailwindcss(), devMockSession(env)],
     // TANGY_DEV_TOOLS=off serves a dev build without the switcher (used by e2e/).
     define: {

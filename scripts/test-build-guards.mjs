@@ -42,9 +42,12 @@ console.log('--- real builds');
 const SENTINEL = 'REVIEW-PASSWORD-SENTINEL-7f3a';
 const base = { ...cfg, VITE_TEAM_REVIEW_MODE: 'true', VITE_TEAM_REVIEW_PASSWORD: SENTINEL, VITE_DEMO_ADMIN_ENABLED: 'true' };
 const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(VERCEL_ENV|TANGY_|VITE_)/.test(k)));
+// Builds read .env files from an empty folder (TANGY_ENV_DIR), so a
+// developer's .env.local can't supply a backend or flags to these cases.
+const emptyEnvDir = mkdtempSync(join(tmpdir(), 'tangy-envdir-'));
 const build = (vars) => {
   const out = mkdtempSync(join(tmpdir(), 'tangy-build-'));
-  const r = spawnSync('npx', ['vite', 'build', '--outDir', out, '--emptyOutDir', '--logLevel', 'warn'], { env: { ...clean, ...vars }, encoding: 'utf8', timeout: 240000 });
+  const r = spawnSync('npx', ['vite', 'build', '--outDir', out, '--emptyOutDir', '--logLevel', 'warn'], { env: { ...clean, TANGY_ENV_DIR: emptyEnvDir, ...vars }, encoding: 'utf8', timeout: 240000 });
   let js = '';
   if (r.status === 0) for (const f of readdirSync(join(out, 'assets'))) if (f.endsWith('.js')) js += readFileSync(join(out, 'assets', f), 'utf8');
   const files = r.status === 0 ? readdirSync(join(out, 'assets')).join(' ') : '';
@@ -69,8 +72,15 @@ b = build({ TANGY_ALLOW_UNCONFIGURED_BUILD: '1', VERCEL_ENV: 'production' });
 check(!b.ok, 'unconfigured build on Vercel production → build fails');
 b = build({ TANGY_ALLOW_UNCONFIGURED_BUILD: '1', TANGY_DEPLOY_ENV: 'development' });
 check(b.ok && /never deploy it/.test(b.log), 'explicit development smoke build without a backend → builds with a warning');
+// No code may read the whole import.meta.env object: Vite would then inline
+// every VITE_ variable, including ones the app never uses (src/config/launch.js
+// once did). A canary variable no code reads must not reach the bundle.
+const CANARY = 'UNREAD-VITE-VAR-CANARY-91c4';
+b = build({ ...cfg, VITE_UNREAD_CANARY: CANARY });
+check(b.ok && !b.js.includes(CANARY), 'an unread VITE_ variable is not inlined (no whole import.meta.env object in the bundle)');
 b = build({ ...cfg, VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_secret_abc' });
 check(!b.ok && /Supabase secret/.test(b.log), 'a secret key in a VITE_ variable → build fails (unchanged)');
 
+rmSync(emptyEnvDir, { recursive: true, force: true });
 console.log(failed ? `${failed} FAILED` : 'ALL BUILD GUARD CHECKS PASSED');
 process.exit(failed ? 1 : 0);

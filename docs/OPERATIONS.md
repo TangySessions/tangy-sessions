@@ -1,8 +1,13 @@
 # Tangy World — operations guide
 
-Everything here has been verified on the **local** stack only. Nothing has been
-deployed, no production migration has been applied, and no production secret
-has been configured. Values below are intentionally left empty.
+Everything here has been verified on the **local** stack only. Values below
+are intentionally left empty.
+
+**Production state (see `docs/RECOVERY.md`):** the database is recorded at
+migration 0045 (0037–0045 applied by hand on 2026-10-06; confirm with the
+schema fingerprint before relying on it). **No Edge Function is deployed**
+(all seven answered 404 on 2026-11-11), and no Razorpay, Resend or cron secret
+is configured. Deploy functions only from a branch that contains 0037–0045.
 
 ## 1. Scheduled jobs
 

@@ -171,6 +171,11 @@ Deno.serve(async (req) => {
     }
 
     const totalAmountPaise = Number(booking.amount) * 100;
+    // Releases THIS request's new hold — only while it is still a pending hold
+    // without an order, so it can never fail a hold that another request has
+    // since resumed, replaced or attached an order (and possibly money) to.
+    const releaseOwnHold = () => admin.from('bookings').update({ status: 'failed' })
+      .eq('id', booking.id).eq('status', 'pending').is('razorpay_order_id', null);
     // The same checkout again (refresh / retry with the same details): the
     // database returned this account's existing hold, which already has its
     // Razorpay order — reuse it rather than creating another.
@@ -184,7 +189,7 @@ Deno.serve(async (req) => {
     if (!razorpayKeyId || !razorpayKeySecret) {
       // Payments not configured on this deployment: release the hold at once
       // rather than keeping seats for a checkout that cannot be paid.
-      await admin.from('bookings').update({ status: 'failed' }).eq('id', booking.id);
+      await releaseOwnHold();
       return json({ error: 'Online payment is not available yet — please try again later.' }, 503);
     }
     const basicAuth = btoa(`${razorpayKeyId}:${razorpayKeySecret}`);
@@ -208,18 +213,31 @@ Deno.serve(async (req) => {
       console.error('Razorpay order creation failed', errBody);
       // Release the capacity this booking was holding — a 'failed' booking
       // no longer counts against create_pending_booking's capacity check.
-      await admin.from('bookings').update({ status: 'failed' }).eq('id', booking.id);
+      await releaseOwnHold();
       return json({ error: 'Could not create payment order.' }, 502);
     }
     const order = await orderRes.json();
 
-    const { error: attachError } = await admin
+    // Attach the order only to a hold that is still pending and has no order
+    // yet. Two overlapping checkouts from one account are serialized by the
+    // database (0037), but the second can replace (expire) the first hold
+    // before the first request reaches this line. Handing that request's order
+    // to the browser would let the customer pay for a superseded hold, so it
+    // is refused instead; the unpaid Razorpay order is simply never used.
+    const { data: attached, error: attachError } = await admin
       .from('bookings')
       .update({ razorpay_order_id: order.id })
-      .eq('id', booking.id);
+      .eq('id', booking.id)
+      .eq('status', 'pending')
+      .is('razorpay_order_id', null)
+      .select('id');
     if (attachError) {
       console.error('Could not attach order id to booking', attachError);
       return json({ error: 'Could not record booking.' }, 500);
+    }
+    if (!attached || attached.length !== 1) {
+      console.error('Order not attached: the hold was replaced or already has an order', booking.id);
+      return json({ error: 'This checkout was replaced by a newer one on your account. Please try again.' }, 409);
     }
 
     return json({

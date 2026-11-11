@@ -17,9 +17,22 @@
 // It is ON unless the build sets VITE_TEMPORARY_LAUNCH=false, so a deploy
 // can't fall back to the full site by accident. `import.meta.env` is absent
 // when Node imports this file (e2e/navigation.mjs via siteNav.js).
-const env = import.meta.env || {};
+//
+// Each variable is read by its full static name, never through the whole
+// `import.meta.env` object: Vite inlines only the names it sees, but a
+// reference to the bare object inlines EVERY VITE_ variable into the bundle
+// (including VITE_TEAM_REVIEW_PASSWORD, which the build guards compile out of
+// production). scripts/test-build-guards.mjs checks the bundle for this.
+let launchFlag;
+let formUrlRaw;
+try {
+  launchFlag = import.meta.env.VITE_TEMPORARY_LAUNCH;
+  formUrlRaw = import.meta.env.VITE_TEMP_SESSION_FORM_URL;
+} catch {
+  // Node (no import.meta.env): defaults below — launch mode on, no form.
+}
 
-export const LAUNCH_MODE = env.VITE_TEMPORARY_LAUNCH !== 'false';
+export const LAUNCH_MODE = launchFlag !== 'false';
 
 // Shown wherever a feature is held back for the launch.
 export const COMING_SOON_EMAIL = 'hello@tangysessions.com';
@@ -59,4 +72,4 @@ export function toGoogleFormUrl(raw) {
 // Set VITE_TEMP_SESSION_FORM_URL in Vercel (Production + Preview) and redeploy.
 // Missing or not a Google Forms link → null, and the card shows
 // "Registration opens soon" instead of a button.
-export const TEMP_SESSION_FORM_URL = toGoogleFormUrl(env.VITE_TEMP_SESSION_FORM_URL);
+export const TEMP_SESSION_FORM_URL = toGoogleFormUrl(formUrlRaw);

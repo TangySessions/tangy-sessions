@@ -19,6 +19,7 @@ let handler;
 globalThis.Deno = { env: { get: (k) => env[k] }, serve: (h) => { handler = h; } };
 
 let rpcAnswer;            // what create_pending_booking returns this time
+let attachRows = [{ id: 'bk-1' }]; // rows the order-attach update matches
 const updates = [];       // bookings updates the function makes
 const razorpayCalls = [];
 globalThis.__createClient = () => ({
@@ -29,7 +30,19 @@ globalThis.__createClient = () => ({
       select: () => chain, eq: () => chain, gt: () => chain,
       single: async () => ({ data: { id: 'evt-1', price: 500, status: 'on-sale', booking_min_quantity: 1, booking_max_quantity: 4 }, error: null }),
       maybeSingle: async () => ({ data: null, error: null }),
-      update: (patch) => { updates.push({ table, patch }); return { eq: async () => ({ error: null }) }; },
+      // A filtered update: records the patch and its filters; awaiting it gives
+      // { error }, and .select() gives the rows it matched (scripted by attachRows).
+      update: (patch) => {
+        const u = { table, patch, filters: [] };
+        updates.push(u);
+        const q = {
+          eq: (c, v) => { u.filters.push(['eq', c, v]); return q; },
+          is: (c, v) => { u.filters.push(['is', c, v]); return q; },
+          select: async () => ({ data: attachRows, error: null }),
+          then: (ok, ko) => Promise.resolve({ error: null }).then(ok, ko),
+        };
+        return q;
+      },
     };
     return chain;
   },
@@ -86,6 +99,39 @@ rpcAnswer = { data: null, error: { code: 'P0001', message: 'EVENT_CLOSED: This s
 r = await call();
 check(r.status === 409 && r.json.error === 'This session has already taken place.' && razorpayCalls.length === 0 && updates.length === 0,
   'past session (still on-sale) → 409 "already taken place", no Razorpay order, nothing written');
+
+// Only a still-pending hold without an order may receive the new order id.
+rpcAnswer = { data: { id: 'bk-1', amount: 1180, razorpay_order_id: null }, error: null };
+r = await call();
+const attach = updates.find((u) => u.patch.razorpay_order_id);
+const has = (u, f) => u.filters.some((x) => x.join('|') === f.join('|'));
+check(attach && has(attach, ['eq', 'status', 'pending']) && has(attach, ['is', 'razorpay_order_id', null]),
+  'order attach is limited to a pending hold that has no order yet');
+
+// Overlapping checkout from the same account replaced this hold before the
+// order was attached: the order must not reach the browser.
+attachRows = [];
+r = await call();
+check(r.status === 409 && !r.json.order_id && /replaced by a newer one/.test(r.json.error),
+  'hold replaced before attach → 409, no order handed to the browser');
+attachRows = [{ id: 'bk-1' }];
+
+// Releasing seats after a failed Razorpay call only touches this request's own,
+// still order-less pending hold.
+const realFetch = globalThis.fetch;
+globalThis.fetch = async () => new Response('{"error":"bad"}', { status: 500 });
+r = await call();
+globalThis.fetch = realFetch;
+const release = updates.find((u) => u.patch.status === 'failed');
+check(r.status === 502 && release && has(release, ['eq', 'status', 'pending']) && has(release, ['is', 'razorpay_order_id', null]),
+  'Razorpay order failure → 502; the release is limited to the own pending, order-less hold');
+
+delete env.RAZORPAY_KEY_SECRET;
+r = await call();
+env.RAZORPAY_KEY_SECRET = 'rzp_test_secret_value';
+const release2 = updates.find((u) => u.patch.status === 'failed');
+check(r.status === 503 && razorpayCalls.length === 0 && release2 && has(release2, ['is', 'razorpay_order_id', null]),
+  'payments not configured → 503, no Razorpay call, guarded release');
 
 rpcAnswer = { data: null, error: { code: 'P0001', message: 'SOLD_OUT' } };
 r = await call();
