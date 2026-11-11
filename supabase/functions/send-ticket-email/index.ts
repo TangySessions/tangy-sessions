@@ -10,11 +10,13 @@
 //     already queued or sent, a direct send only as a fallback;
 //   * the admin "RESEND EMAIL" action (`force: true`) — always sends.
 // Re-verifies everything server-side: the caller's session, that the caller
-// owns the booking or is on the team, and that the booking is confirmed.
+// owns the booking, is an active admin, or is active staff assigned to the
+// booking's event, and that the booking is confirmed.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { handleOptions, jsonResponse } from '../_shared/cors.ts';
 import { sendEmail } from '../_shared/email.ts';
 import { buildTicketEmail, markTicketEmail, ticketDedupeKey } from '../_shared/ticketEmail.ts';
+import { activeRole } from '../_shared/caller.ts';
 
 Deno.serve(async (req) => {
   // Answers with this request's origin when it is allowed (_shared/cors.ts).
@@ -40,11 +42,21 @@ Deno.serve(async (req) => {
     const { data: booking, error: bookingError } = await admin.from('bookings').select('*').eq('id', booking_id).single();
     if (bookingError || !booking) return json({ error: 'Booking not found.' }, 404);
 
-    // Only the booking's own owner, or an admin (for the resend action), may trigger this.
-    const { data: callerProfile } = await admin.from('profiles').select('role').eq('id', userData.user.id).single();
+    // Only the booking's own owner, an active admin, or active staff working
+    // THIS booking's event (for the resend action) may trigger this. A
+    // deactivated account keeps no team role. Staff are scoped by the
+    // database's own is_assigned_to_event() (event_assignments, the rule RLS
+    // and check-in use), run under the caller's session for the event of the
+    // booking row read above — never an event id from the request.
+    const callerRole = await activeRole(admin, userData.user.id);
     const isOwner = booking.user_id === userData.user.id;
-    const isAdmin = callerProfile && ['staff', 'admin', 'super_admin'].includes(callerProfile.role);
-    if (!isOwner && !isAdmin) return json({ error: 'Not authorized for this booking.' }, 403);
+    const isAdmin = callerRole !== null && ['admin', 'super_admin'].includes(callerRole);
+    let isEventStaff = false;
+    if (!isOwner && !isAdmin && callerRole === 'staff') {
+      const { data: assigned, error: assignedError } = await authClient.rpc('is_assigned_to_event', { p_event_id: booking.event_id });
+      isEventStaff = !assignedError && assigned === true;
+    }
+    if (!isOwner && !isAdmin && !isEventStaff) return json({ error: 'Not authorized for this booking.' }, 403);
 
     if (booking.status !== 'confirmed') {
       return json({ error: 'Booking is not confirmed yet — no ticket email to send.' }, 409);

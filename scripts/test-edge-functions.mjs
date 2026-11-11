@@ -50,7 +50,7 @@ globalThis.__createClient = () => ({
     },
     update: () => {
       const key = table === 'payment_webhook_events' ? 'mark' : `update:${table}`;
-      const chain = { eq: () => chain, then: (ok, ko) => { calls.push(key); return Promise.resolve(db[key] ?? { error: null }).then(ok, ko); } };
+      const chain = { eq: () => chain, in: () => chain, lt: () => chain, then: (ok, ko) => { calls.push(key); return Promise.resolve(db[key] ?? { error: null }).then(ok, ko); } };
       return chain;
     },
   }),
@@ -186,7 +186,7 @@ check(ok(r) && r.calls.includes('mark') && !r.calls.includes('rpc:record_webhook
 const failedBody = JSON.stringify({ event: 'payment.failed', payload: { payment: { entity: { id: 'pay_F1', order_id: 'order_F1' } } } });
 db = {};
 r = await send({ body: failedBody });
-check(ok(r) && r.calls.join() === 'insert:payment_webhook_events,update:bookings,mark', 'payment.failed → pending hold released, 200');
+check(ok(r) && r.calls.join() === 'insert:payment_webhook_events,update:bookings,mark', 'payment.failed → the attempt is recorded on the pending hold (seats kept for a retry), 200');
 db = { 'update:bookings': { error: { message: 'x' } } };
 r = await send({ body: failedBody });
 check(r.status === 500 && r.calls.includes('rpc:record_webhook_failure'), 'payment.failed whose update fails → recorded, 500');

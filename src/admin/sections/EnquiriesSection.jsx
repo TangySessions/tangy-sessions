@@ -1,14 +1,27 @@
+import { useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
+import { changeRows } from '../../lib/mutation';
 import { useAdminList } from '../useAdminList';
 import { SearchBar, StatusBadge, LoadMoreButton, EmptyState, NotConfiguredState, ActionButton } from '../AdminUI';
+
+// A failed load is not "no messages", and a refused status change is not a
+// success: both are shown, with the safe wording from changeRows/friendlyError.
+const Problem = ({ text, onRetry }) => (
+  <div role="alert" data-enquiry-error className="mb-3 p-3 border border-[#ef4444]/60 bg-[#ef4444]/10 text-[#fca5a5] font-mono text-[11px] flex items-center gap-3">
+    <span className="flex-1">{text}</span>
+    {onRetry && <button type="button" onClick={onRetry} className="px-3 py-1 border border-current uppercase text-[10px]">Retry</button>}
+  </div>
+);
 
 export const ContactEnquiriesSection = () => {
   const { rows, total, loading, error, search, setSearch, hasMore, loadMore, reload } = useAdminList('contact_enquiries', {
     searchFields: ['name', 'email', 'subject', 'inquiry_type'],
   });
 
+  const [actionError, setActionError] = useState('');
   const updateStatus = async (id, status) => {
-    await supabase.from('contact_enquiries').update({ status }).eq('id', id);
+    const r = await changeRows(supabase.from('contact_enquiries').update({ status }).eq('id', id), 'contact_enquiries status');
+    setActionError(r.ok ? '' : r.message);
     reload();
   };
 
@@ -18,7 +31,10 @@ export const ContactEnquiriesSection = () => {
     <div className="bg-[#191410] border border-[#C99A2E]/60 p-6 rounded-sm">
       <h3 className="text-lg font-bold text-[#C99A2E] mb-4 border-b border-[#C99A2E]/30 pb-2">CONTACT ENQUIRIES</h3>
       <SearchBar value={search} onChange={setSearch} placeholder="Search name, email, type..." count={total} />
-      {loading ? <div className="p-10 text-center font-mono text-xs font-bold text-[#E7D5A4]/60">LOADING...</div> : rows.length === 0 ? (
+      {actionError && <Problem text={actionError} />}
+      {loading ? <div className="p-10 text-center font-mono text-xs font-bold text-[#E7D5A4]/60">LOADING...</div> : error ? (
+        <Problem text="Couldn't load these enquiries. Check your connection and try again." onRetry={reload} />
+      ) : rows.length === 0 ? (
         <EmptyState>NO MESSAGES YET.</EmptyState>
       ) : (
         <div className="flex flex-col gap-3">
@@ -50,8 +66,10 @@ export const PrivateEnquiriesSection = () => {
     searchFields: ['name', 'email', 'type', 'status'],
   });
 
+  const [actionError, setActionError] = useState('');
   const updateStatus = async (id, status) => {
-    await supabase.from('private_enquiries').update({ status }).eq('id', id);
+    const r = await changeRows(supabase.from('private_enquiries').update({ status }).eq('id', id), 'private_enquiries status');
+    setActionError(r.ok ? '' : r.message);
     reload();
   };
 
@@ -61,7 +79,10 @@ export const PrivateEnquiriesSection = () => {
     <div className="bg-[#191410] border border-[#C99A2E]/60 p-6 rounded-sm">
       <h3 className="text-lg font-bold text-[#C99A2E] mb-4 border-b border-[#C99A2E]/30 pb-2">PRIVATE SESSION ENQUIRIES</h3>
       <SearchBar value={search} onChange={setSearch} placeholder="Search name, email, type..." count={total} />
-      {loading ? <div className="p-10 text-center font-mono text-xs font-bold text-[#E7D5A4]/60">LOADING...</div> : rows.length === 0 ? (
+      {actionError && <Problem text={actionError} />}
+      {loading ? <div className="p-10 text-center font-mono text-xs font-bold text-[#E7D5A4]/60">LOADING...</div> : error ? (
+        <Problem text="Couldn't load these enquiries. Check your connection and try again." onRetry={reload} />
+      ) : rows.length === 0 ? (
         <EmptyState>NO PRIVATE ENQUIRIES YET.</EmptyState>
       ) : (
         <div className="flex flex-col gap-3">

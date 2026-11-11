@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useUserAuth } from '../../context/UserAuthContext';
 import { supabase, isSupabaseConfigured } from '../../lib/supabaseClient';
+import { changeRows, loadFailed } from '../../lib/mutation';
 import { AgentRequestForm } from '../../components/ai/AgentRequestForm';
 import { PortalShell, Badge, Empty, fmtDate, StatTile, ReadOnlyNote } from './portal/PortalUI';
 import { usePartnerPortal, partnerTabs, PartnerSection } from '../../portal/PartnerPortal';
@@ -35,6 +36,9 @@ export const VendorDashboard = ({ overrideProfile, readOnly, demoData } = {}) =>
   const [profile, setProfile] = useState(null);
   const [profileForm, setProfileForm] = useState({ business_name: '', category: '', gstin: '', phone: '', description: '' });
   const [profileMsg, setProfileMsg] = useState('');
+  // A failed load or a refused change is shown, never mistaken for "nothing here" / success.
+  const [loadError, setLoadError] = useState('');
+  const [actionError, setActionError] = useState('');
   const [assignments, setAssignments] = useState([]);
   const [agentSent, setAgentSent] = useState(null);
 
@@ -52,7 +56,7 @@ export const VendorDashboard = ({ overrideProfile, readOnly, demoData } = {}) =>
     }
     if (!isSupabaseConfigured) { setLoading(false); return; }
 
-    const [{ data: apps }, { data: prof }, { data: assigns }] = await Promise.all([
+    const [{ data: apps, error: appsError }, { data: prof, error: profError }, { data: assigns, error: assignsError }] = await Promise.all([
       supabase.from('collaborations').select('*').eq('user_id', user.id).eq('type', 'vendor').order('created_at', { ascending: false }),
       supabase.from('vendor_profiles').select('*').eq('id', user.id).maybeSingle(),
       supabase
@@ -63,6 +67,7 @@ export const VendorDashboard = ({ overrideProfile, readOnly, demoData } = {}) =>
         .order('created_at', { ascending: false }),
     ]);
 
+    setLoadError(loadFailed(appsError || profError || assignsError) || '');
     setApplications(apps || []);
     setProfile(prof || null);
     if (prof) setProfileForm({ business_name: prof.business_name || '', category: prof.category || '', gstin: prof.gstin || '', phone: prof.phone || '', description: prof.description || '' });
@@ -76,15 +81,16 @@ export const VendorDashboard = ({ overrideProfile, readOnly, demoData } = {}) =>
 
   const respond = async (id, status) => {
     if (readOnly) return;
-    await supabase.from('event_assignments').update({ status }).eq('id', id);
+    const r = await changeRows(supabase.from('event_assignments').update({ status }).eq('id', id), 'assignment response');
+    setActionError(r.ok ? '' : r.message);
     load();
   };
 
   const saveProfile = async (e) => {
     e.preventDefault();
     if (readOnly) return;
-    const { error } = await supabase.from('vendor_profiles').update(profileForm).eq('id', user.id);
-    setProfileMsg(error ? 'Could not save.' : '✓ SAVED');
+    const r = await changeRows(supabase.from('vendor_profiles').update(profileForm).eq('id', user.id), 'profile save');
+    setProfileMsg(r.ok ? '✓ SAVED' : r.message);
   };
 
   const upcoming = assignments.filter((a) => a.events?.event_date >= TODAY && a.status !== 'declined');
@@ -113,6 +119,12 @@ export const VendorDashboard = ({ overrideProfile, readOnly, demoData } = {}) =>
       notificationsFor={portalMode ? user.id : null}
       preview={readOnly ? { label: `Viewing Vendor Portal — ${profile?.business_name || user.full_name || user.email}` } : undefined}
     >
+      {(loadError || actionError) && (
+        <div role="alert" data-dashboard-error className="mb-4 p-3 border border-[#ef4444]/60 bg-[#ef4444]/10 text-[#fca5a5] text-[11px] font-mono flex items-center gap-3">
+          <span className="flex-1">{actionError || `Couldn't load your dashboard — ${loadError}`}</span>
+          <button type="button" onClick={() => { setActionError(''); load(); }} className="px-3 py-1 border border-current uppercase text-[10px]">Retry</button>
+        </div>
+      )}
       {portalMode && <PartnerSection portal={portal} user={user} />}
       {!portalMode && activeTab === 'overview' && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -194,7 +206,7 @@ export const VendorDashboard = ({ overrideProfile, readOnly, demoData } = {}) =>
               <label className="block text-[10px] font-bold uppercase mb-1">Description</label>
               <textarea disabled={readOnly} rows={3} value={profileForm.description} onChange={(e) => { setProfileForm({ ...profileForm, description: e.target.value }); setProfileMsg(''); }} className="w-full p-3 bg-[#F5E9C9] border-2 border-[#11100C] outline-none resize-none disabled:opacity-60" />
             </div>
-            {profileMsg && <div className="p-2 bg-[#10b981]/20 border border-[#10b981]/40 text-[#0f5132] text-[10px] font-bold">{profileMsg}</div>}
+            {profileMsg && <div role="status" className={profileMsg.startsWith('✓') ? 'p-2 bg-[#10b981]/20 border border-[#10b981]/40 text-[#0f5132] text-[10px] font-bold' : 'p-2 bg-[#ef4444]/15 border border-[#ef4444]/50 text-[#7f1d1d] text-[10px] font-bold'}>{profileMsg}</div>}
             {!readOnly && <button type="submit" className="py-3 bg-[#11100C] text-[#E7D5A4] hover:bg-[#B94717] font-bold uppercase tracking-widest border-2 border-[#11100C]">SAVE</button>}
           </form>
         )

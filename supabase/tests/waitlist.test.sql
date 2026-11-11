@@ -66,7 +66,8 @@ insert into auth.users (id, email, aud, role, raw_user_meta_data) values
   ('00000000-0000-0000-0000-00000000b503', 'cai@wl.tangy.test',   'authenticated', 'authenticated', '{"full_name":"Cai"}'),
   ('00000000-0000-0000-0000-00000000b504', 'dev@wl.tangy.test',   'authenticated', 'authenticated', '{"full_name":"Dev"}'),
   ('00000000-0000-0000-0000-00000000b505', 'eli@wl.tangy.test',   'authenticated', 'authenticated', '{"full_name":"Eli"}'),
-  ('00000000-0000-0000-0000-00000000b509', 'buyer@wl.tangy.test', 'authenticated', 'authenticated', '{"full_name":"Buyer"}');
+  ('00000000-0000-0000-0000-00000000b509', 'buyer@wl.tangy.test', 'authenticated', 'authenticated', '{"full_name":"Buyer"}'),
+  ('00000000-0000-0000-0000-00000000b50a', 'buyer2@wl.tangy.test', 'authenticated', 'authenticated', '{"full_name":"Second Buyer"}');
 update profiles set role = 'admin' where id = '00000000-0000-0000-0000-00000000b500';
 
 insert into events (id, slug, name, event_date, venue, capacity, price, status, booking_max_quantity) values
@@ -83,7 +84,8 @@ select tt.expect_error($$select join_waitlist('00000000-0000-0000-0000-00000000b
 select tt.expect_error($$insert into waitlist (event_id, user_id, name, email, status) values ('00000000-0000-0000-0000-00000000b601', auth.uid(), 'Ana', 'ana@wl.tangy.test', 'offered')$$, '%row-level security%', 'members cannot write waitlist rows directly (no self-offers)');
 select tt.logout();
 select tt.book('00000000-0000-0000-0000-00000000b509', 'W-B1', 2);
-select tt.book('00000000-0000-0000-0000-00000000b509', 'W-B2', 2);
+-- Two customers fill the session (one account holds one checkout at a time — 0037).
+select tt.book('00000000-0000-0000-0000-00000000b50a', 'W-B2', 2);
 insert into waitlist (event_id, name, email) values ('00000000-0000-0000-0000-00000000b601', 'Legacy Walk-in', 'legacy@x.test');
 
 select tt.login('00000000-0000-0000-0000-00000000b501');

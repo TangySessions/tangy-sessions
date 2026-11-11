@@ -210,7 +210,13 @@ export const BookingDrawer = ({ bookingId, onClose, onChanged, inline = false })
                 </div>
               )}
               {qrFor === 'group' && b.group_token && <div className="px-4 py-3"><TicketQr token={b.group_token} kind="BOOKING" /></div>}
-              {(arrivals.data || []).length === 0 ? <div className="px-4 py-3 text-[12.5px] text-[#E7D5A4]/60">No one has checked in yet.</div> : (
+              {arrivals.error ? (
+                <div role="alert" className="px-4 py-3 text-[12.5px] text-[#ffc4bd] flex items-center gap-3">
+                  <span className="flex-1">Couldn't load arrivals. {arrivals.error.message}</span>
+                  <Button size="sm" variant="ghost" onClick={arrivals.reload}>Retry</Button>
+                </div>
+              ) : arrivals.loading && !arrivals.data ? <div className="px-4 py-3 text-[12.5px] text-[#E7D5A4]/60">Loading arrivals…</div>
+              : (arrivals.data || []).length === 0 ? <div className="px-4 py-3 text-[12.5px] text-[#E7D5A4]/60">No one has checked in yet.</div> : (
                 <ul className="divide-y divide-[#E7D5A4]/[0.06]" data-arrivals>
                   {arrivals.data.map((a) => (
                     <li key={a.ticket_number} className="px-4 py-2.5 text-[12.5px] flex flex-wrap items-center gap-x-3 gap-y-0.5">

@@ -31,7 +31,8 @@ export const ENTITIES = {
       { key: 'account', header: 'Portal', mobileHidden: true, render: (r) => (r.user_id ? <Badge tone="good">Linked</Badge> : <Badge tone="muted">Roster only</Badge>) },
       { key: 'status', header: 'Status', render: (r) => <Badge status={r.status} /> },
     ],
-    fields: [['name', 'Name', true], ['email', 'Email', true], ['genre', 'Genre'], ['city', 'City'], ['experience_level', 'Experience'], ['instagram', 'Instagram'], ['soundcloud', 'SoundCloud'], ['spotify', 'Spotify'], ['avatar_url', 'Avatar URL'], ['bio', 'Bio', false, true]],
+    // The public URL is Tangy's to set (artists can't change it, 0040); blank = generated from the stage name.
+    fields: [['name', 'Name', true], ['email', 'Email', true], ['slug', 'Public page URL (/artists/…) — blank to generate'], ['genre', 'Genre'], ['city', 'City'], ['experience_level', 'Experience'], ['instagram', 'Instagram'], ['soundcloud', 'SoundCloud'], ['spotify', 'Spotify'], ['avatar_url', 'Avatar URL'], ['bio', 'Bio', false, true]],
     related: async (r) => {
       const { data } = await supabase.from('event_artists').select('events(id, name, event_date, status)').eq('artist_id', r.id);
       return (data || []).map((x) => x.events).filter(Boolean);

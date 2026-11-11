@@ -1,6 +1,6 @@
 // TEAM REVIEW MODE — temporary review deployments only (see vite.config.js).
 // `__TANGY_REVIEW_MODE__` is fixed at build time: false unless the build sets
-// VITE_TEAM_REVIEW_MODE=true, and a Vercel production build refuses that unless
+// VITE_TEAM_REVIEW_MODE=true, and a production build (any host — build-guards.js) refuses that unless
 // TANGY_ALLOW_REVIEW_BUILD=1. When false, the demo login and everything below
 // is dead code. The accounts are the disposable demo accounts loaded into the
 // review project by `DEMO_TARGET=review scripts/demo-data.sh seed`; their

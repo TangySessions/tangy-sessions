@@ -33,15 +33,17 @@ export const ArtistEventDrawer = ({ event: e, onClose }) => {
     if (!e) return undefined;
     let cancelled = false;
     Promise.all([
-      portalApi.requirements().catch(() => []),
-      portalApi.documents().catch(() => []),
-      supabase.from('partner_invoices').select('invoice_number, amount, currency, status, due_date, paid_date').eq('event_id', e.event_id).then(({ data }) => data || []),
+      // A failed read is null (shown as "couldn't load"), never an empty list.
+      portalApi.requirements().catch(() => null),
+      portalApi.documents().catch(() => null),
+      supabase.from('partner_invoices').select('invoice_number, amount, currency, status, due_date, paid_date').eq('event_id', e.event_id).then(({ data, error }) => (error ? null : data || [])),
     ]).then(([reqs, docs, invoices]) => {
       if (cancelled) return;
       setExtra({
-        reqs: reqs.filter((r) => r.event_id === e.event_id && ['requested', 'changes_requested', 'submitted'].includes(r.status)),
-        docs: docs.filter((d) => d.event_id === e.event_id),
-        invoices,
+        failed: reqs === null || docs === null || invoices === null,
+        reqs: (reqs || []).filter((r) => r.event_id === e.event_id && ['requested', 'changes_requested', 'submitted'].includes(r.status)),
+        docs: (docs || []).filter((d) => d.event_id === e.event_id),
+        invoices: invoices || [],
       });
     });
     return () => { cancelled = true; };
@@ -93,7 +95,8 @@ export const ArtistEventDrawer = ({ event: e, onClose }) => {
         </dl>
       </Panel>
       <Panel title="Requirements">
-        {extra === null ? <Skeleton rows={2} /> : extra.reqs.length === 0 ? <p className="text-[13px] text-[#E7D5A4]/55">Nothing needed from you for this event.</p> : (
+        {extra?.failed && <p role="alert" data-drawer-error className="text-[13px] text-[#ef6b5e] m-0">Some details for this event couldn't be loaded. Close and reopen to try again.</p>}
+        {extra === null ? <Skeleton rows={2} /> : extra.reqs.length === 0 ? <p className="text-[13px] text-[#E7D5A4]/55">{extra.failed ? '—' : 'Nothing needed from you for this event.'}</p> : (
           <ul className="flex flex-col gap-1.5 text-[13px]">
             {extra.reqs.map((r) => <li key={r.id} className="flex items-center justify-between gap-2"><span>{r.title}</span><Badge tone={r.status === 'submitted' ? 'info' : 'warn'}>{r.status.replace('_', ' ')}</Badge></li>)}
             <li><Link to="/artist/dashboard/requirements" className="text-[#e4bd5c] underline underline-offset-2 text-[12.5px]">Respond to requirements</Link></li>
@@ -101,7 +104,7 @@ export const ArtistEventDrawer = ({ event: e, onClose }) => {
         )}
       </Panel>
       <Panel title="Documents">
-        {extra === null ? <Skeleton rows={2} /> : extra.docs.length === 0 ? <p className="text-[13px] text-[#E7D5A4]/55">No documents for this event yet.</p> : (
+        {extra === null ? <Skeleton rows={2} /> : extra.docs.length === 0 ? <p className="text-[13px] text-[#E7D5A4]/55">{extra.failed ? '—' : 'No documents for this event yet.'}</p> : (
           <ul className="flex flex-col gap-1.5 text-[13px]">
             {extra.docs.map((d) => (
               <li key={d.id}>

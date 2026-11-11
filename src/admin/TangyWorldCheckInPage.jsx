@@ -33,6 +33,22 @@ const TONE = {
   bad: 'bg-[#40150f] border-[#ef6b5e] text-[#ffc4bd]',
 };
 
+// A read that failed (events, search, counts): a plain staff-safe message —
+// CheckinError carries one — and a Retry that only repeats the read.
+function LoadError({ error, onRetry, label, compact = false }) {
+  return (
+    <div role="alert" data-load-error={label}
+      className={cx('rounded-md border border-[#ef6b5e] bg-[#40150f] text-[#ffc4bd] flex items-center gap-3', compact ? 'px-3 py-2 text-[13px]' : 'p-4 text-[14px]')}>
+      <Icon name="TriangleAlert" size={compact ? 16 : 22} className="shrink-0" />
+      <div className="flex-1 min-w-0">
+        <div className="font-medium">{label}</div>
+        <div className="opacity-90">{error?.message || 'Something went wrong. Try again.'}</div>
+      </div>
+      <button type="button" onClick={onRetry} className="h-10 px-4 rounded border border-[#ffc4bd]/50 font-mono text-[11px] uppercase tracking-[0.1em] shrink-0 hover:bg-black/20">Retry</button>
+    </div>
+  );
+}
+
 // Unnamed attendees (tickets issued before names were collected) are never
 // given invented names — they read "Guest N".
 const attendeeLabel = (a, i) => a.name || `Guest ${i + 1}`;
@@ -200,6 +216,7 @@ function CheckInWorkspace() {
   const allowManual = useSetting('checkin.allow_manual', true);
   const [params, setParams] = useSearchParams();
   const [events, setEvents] = useState(null);
+  const [eventsError, setEventsError] = useState(null);
   const eventId = params.get('event') || '';
   const [mode, setMode] = useState('scan');
   const [result, setResult] = useState(null);
@@ -210,12 +227,23 @@ function CheckInWorkspace() {
   const q = useDebounced(search, 300);
   const [matches, setMatches] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(null);
+  const [searchAttempt, setSearchAttempt] = useState(0);
   const [stats, setStats] = useState(null);
   const [recent, setRecent] = useState([]);
+  // Counts / recent arrivals that could not be refreshed: the last values stay
+  // on screen, flagged as possibly out of date.
+  const [liveError, setLiveError] = useState(null);
   const lastScan = useRef({ code: '', at: 0 });
   const inFlight = useRef(false);
 
-  useEffect(() => { checkinService.getEvents().then(setEvents); }, []);
+  // A failed load is an error with Retry — never "no events".
+  const loadEvents = useCallback(() => {
+    setEventsError(null);
+    setEvents(null);
+    checkinService.getEvents().then(setEvents, setEventsError);
+  }, []);
+  useEffect(() => { loadEvents(); }, [loadEvents]);
   // Default to today's / the nearest event (RPC orders by distance from today).
   useEffect(() => {
     if (!events || events.length === 0) return;
@@ -224,8 +252,10 @@ function CheckInWorkspace() {
 
   const refresh = useCallback(() => {
     if (!eventId) return;
-    checkinService.getStats(eventId).then(setStats);
-    checkinService.getRecentCheckins(eventId, 8).then(setRecent);
+    Promise.all([checkinService.getStats(eventId), checkinService.getRecentCheckins(eventId, 8)]).then(
+      ([s, rows]) => { setStats(s); setRecent(rows); setLiveError(null); },
+      setLiveError,
+    );
   }, [eventId]);
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -295,12 +325,17 @@ function CheckInWorkspace() {
   };
 
   useEffect(() => {
-    if (mode !== 'manual' || !q.trim() || !eventId) { setMatches([]); return; }
+    if (mode !== 'manual' || !q.trim() || !eventId) { setMatches([]); setSearchError(null); return; }
     let cancelled = false;
     setSearching(true);
-    checkinService.searchTickets(q, eventId).then((rows) => { if (!cancelled) { setMatches(rows); setSearching(false); } });
+    setSearchError(null);
+    // A failed search is never shown as "No attendees found".
+    checkinService.searchTickets(q, eventId).then(
+      (rows) => { if (!cancelled) { setMatches(rows); setSearching(false); } },
+      (error) => { if (!cancelled) { setMatches([]); setSearchError(error); setSearching(false); } },
+    );
     return () => { cancelled = true; };
-  }, [q, eventId, mode, result]);
+  }, [q, eventId, mode, result, searchAttempt]);
 
   const selected = (events || []).find((e) => e.id === eventId);
   // Volunteers: show their window and flip to "expired" on time. The server
@@ -338,14 +373,16 @@ function CheckInWorkspace() {
             onChange={(e) => { setParams({ event: e.target.value }, { replace: true }); setResult(null); }}
             className="w-full bg-transparent text-[15px] text-[#EFE2C0] font-condensed uppercase tracking-wide focus:outline-none truncate"
           >
-            {events === null && <option>Loading events…</option>}
+            {events === null && <option>{eventsError ? 'Events unavailable' : 'Loading events…'}</option>}
             {(events || []).map((e) => <option key={e.id} value={e.id} className="bg-[#11100C]">{e.name} — {fmt.date(e.event_date)}</option>)}
           </select>
         </div>
       </header>
 
       <main className="max-w-xl mx-auto px-3 sm:px-5 py-4 flex flex-col gap-4 pb-16">
-        {events && events.length === 0 ? (
+        {eventsError ? (
+          <LoadError label="Couldn't load your events" error={eventsError} onRetry={loadEvents} />
+        ) : events && events.length === 0 ? (
           <div className="text-center py-16 px-4">
             <Icon name="CalendarDays" size={28} className="mx-auto text-[#C99A2E]/60" />
             <div className="font-condensed text-lg uppercase mt-3">No events to check in</div>
@@ -359,6 +396,7 @@ function CheckInWorkspace() {
                 {accessOver ? 'Your check-in access has expired. Contact the event admin if you still need it.' : `Check-in access until ${fmt.time(selected.access_expires_at)}`}
               </div>
             )}
+            {liveError && <LoadError compact label="Counts may be out of date" error={liveError} onRetry={refresh} />}
             <div className="grid grid-cols-3 gap-2" aria-live="polite">
               {[['Checked in', stats?.checked_in, 'text-[#5fd3a0]'], ['To arrive', stats?.remaining, 'text-[#f5b544]'], ['Tickets', stats?.tickets_issued, 'text-[#EFE2C0]']].map(([label, n, cls]) => (
                 <div key={label} className="bg-[#17130F] border border-[#C99A2E]/20 rounded-md py-2.5 text-center">
@@ -425,7 +463,8 @@ function CheckInWorkspace() {
                     className="w-full h-12 pl-10 pr-3 bg-[#17130F] border border-[#C99A2E]/30 rounded-md text-[15px] text-[#EFE2C0] placeholder:text-[#E7D5A4]/30 focus:outline-none focus:border-[#C99A2E]" />
                 </div>
                 {searching && <div className="text-[12px] text-[#E7D5A4]/60 px-1">Searching…</div>}
-                {!searching && q && matches.length === 0 && <div className="text-[13px] text-[#E7D5A4]/60 px-1 py-3">No attendees found for "{q}".</div>}
+                {!searching && searchError && <LoadError compact label="Search failed" error={searchError} onRetry={() => setSearchAttempt((n) => n + 1)} />}
+                {!searching && !searchError && q && matches.length === 0 && <div className="text-[13px] text-[#E7D5A4]/60 px-1 py-3">No attendees found for "{q}".</div>}
                 <ul className="flex flex-col gap-2">
                   {bookings.map((t) => {
                     const state = partyState(t.party_checked_in, t.party_size);

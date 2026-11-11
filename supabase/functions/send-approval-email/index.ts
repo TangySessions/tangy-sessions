@@ -20,6 +20,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { handleOptions, jsonResponse } from '../_shared/cors.ts';
 import { sendEmail } from '../_shared/email.ts';
+import { activeRole } from '../_shared/caller.ts';
 
 const ROLE_META: Record<string, { label: string; loginPath: string }> = {
   vendor: { label: 'Vendor', loginPath: '/join/login' },
@@ -108,13 +109,10 @@ Deno.serve(async (req) => {
     const admin = createClient(supabaseUrl, serviceRoleKey);
 
     // Re-verify admin server-side — never trust that the caller reaching
-    // this function already passed an admin check somewhere else.
-    const { data: callerProfile } = await admin
-      .from('profiles')
-      .select('role')
-      .eq('id', userData.user.id)
-      .single();
-    if (!callerProfile || !['admin', 'super_admin'].includes(callerProfile.role)) {
+    // this function already passed an admin check somewhere else. A
+    // deactivated admin's session is still valid; their role no longer counts.
+    const callerRole = await activeRole(admin, userData.user.id);
+    if (callerRole === null || !['admin', 'super_admin'].includes(callerRole)) {
       return json({ error: 'Admin access required.' }, 403);
     }
 

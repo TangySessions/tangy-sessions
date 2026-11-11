@@ -89,7 +89,7 @@ select tt.logout();
 \echo '--- 2. Who can change prices'
 select tt.login('00000000-0000-0000-0000-00000000a503');
 with u as (update event_ticket_types set price = 1 where code = 'gen' returning id) select tt.check(not exists (select 1 from u), 'a customer cannot change prices');
-select tt.expect_error($$insert into event_ticket_types (event_id, code, name, price) values ('00000000-0000-0000-0000-00000000a601', 'free', 'Free', 0)$$, '%row-level security%', 'a customer cannot add ticket types');
+select tt.expect_error($$insert into event_ticket_types (event_id, code, name, price) values ('00000000-0000-0000-0000-00000000a601', 'cust', 'Customer-made', 100)$$, '%row-level security%', 'a customer cannot add ticket types');
 select tt.login('00000000-0000-0000-0000-00000000a502');
 with u as (update event_ticket_types set price = 1 where code = 'gen' returning id) select tt.check(not exists (select 1 from u), 'staff cannot change prices');
 select tt.login('00000000-0000-0000-0000-00000000a501');

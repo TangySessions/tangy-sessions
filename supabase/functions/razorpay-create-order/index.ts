@@ -142,6 +142,19 @@ Deno.serve(async (req) => {
     });
 
     if (bookingError) {
+      // One checkout at a time per account (0037): a payment already in
+      // flight for this session, or too many new checkouts in a short time.
+      // The session has already taken place (0038 — decided by the database
+      // on the event's local date, whatever its status says).
+      const closed = bookingError.message?.match(/EVENT_CLOSED: (.+)$/);
+      if (closed) return json({ error: closed[1] }, 409);
+      const holdError = bookingError.message?.match(/(HOLD_IN_PROGRESS|RATE_LIMITED): (.+)$/);
+      if (holdError) {
+        return json({ error: holdError[2] }, holdError[1] === 'RATE_LIMITED' ? 429 : 409);
+      }
+      if (bookingError.code === '23505' && bookingError.message?.includes('bookings_one_active_hold')) {
+        return json({ error: 'A checkout for this session is already in progress on your account. Please try again in a moment.' }, 409);
+      }
       const invalid = bookingError.message?.match(/INVALID_(?:DETAILS|QUANTITY|TICKET_TYPE): (.+)$/);
       if (invalid) {
         return json({ error: invalid[1] }, 400);
@@ -158,6 +171,14 @@ Deno.serve(async (req) => {
     }
 
     const totalAmountPaise = Number(booking.amount) * 100;
+    // The same checkout again (refresh / retry with the same details): the
+    // database returned this account's existing hold, which already has its
+    // Razorpay order — reuse it rather than creating another.
+    if (booking.razorpay_order_id) {
+      const keyId = Deno.env.get('RAZORPAY_KEY_ID');
+      if (!keyId) return json({ error: 'Online payment is not available yet — please try again later.' }, 503);
+      return json({ order_id: booking.razorpay_order_id, amount: totalAmountPaise, currency: 'INR', key_id: keyId, booking_id: booking.id, resumed: true });
+    }
     const razorpayKeyId = Deno.env.get('RAZORPAY_KEY_ID');
     const razorpayKeySecret = Deno.env.get('RAZORPAY_KEY_SECRET');
     if (!razorpayKeyId || !razorpayKeySecret) {

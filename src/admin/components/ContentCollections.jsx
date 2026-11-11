@@ -455,13 +455,11 @@ export function ProgrammesManager(routeProps) {
       <ProgrammeSessionsField value={f.event_ids} onChange={(v) => set({ event_ids: v })} disabled={!(rights.create || rights.edit)} />
     </>
   );
+  // One transaction (set_programme_sessions, 0043): the list is replaced
+  // whole or not at all — a failure never leaves the programme without sessions.
   const syncSessions = async (row, form) => {
-    const { error: delError } = await supabase.from('programme_events').delete().eq('programme_id', row.id);
-    if (delError) return { error: `Saved, but the sessions could not be updated: ${contentErrorMessage(delError)}`, form: { event_ids: form.event_ids } };
-    if (form.event_ids.length) {
-      const { error } = await supabase.from('programme_events').insert(form.event_ids.map((event_id, position) => ({ programme_id: row.id, event_id, position })));
-      if (error) return { error: `Saved, but the sessions could not be linked: ${contentErrorMessage(error)}`, form: { event_ids: form.event_ids } };
-    }
+    const { error } = await supabase.rpc('set_programme_sessions', { p_programme_id: row.id, p_event_ids: form.event_ids });
+    if (error) return { error: `Saved, but the sessions could not be updated (the previous list is unchanged): ${contentErrorMessage(error)}`, form: { event_ids: form.event_ids } };
     return { form: { event_ids: form.event_ids } };
   };
   return (

@@ -30,13 +30,16 @@ const toLocalInput = (iso) => {
 const minutes = (t) => (t ? Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5)) : null);
 const overlaps = (a, b) => a.start && a.end && b.start && b.end && minutes(a.start) < minutes(b.end) && minutes(a.end) > minutes(b.start);
 
-function validate(f, lineup) {
+function validate(f, lineup, isEdit) {
   const e = {};
   if (!f.name.trim()) e.name = 'Required';
   if (!f.event_date) e.event_date = 'Required';
   if (f.slug && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(f.slug)) e.slug = 'Lowercase letters, numbers and dashes only';
   if (!(Number(f.capacity) >= 0) || !Number.isInteger(Number(f.capacity))) e.capacity = 'Whole number ≥ 0';
   if (!(Number(f.price) >= 0) || !Number.isInteger(Number(f.price))) e.price = 'Whole rupees ≥ 0';
+  // A new event's price becomes its first ticket type, which must be ≥ ₹1
+  // (online checkout can't take ₹0; 0039 enforces it in the database).
+  else if (!isEdit && Number(f.price) < 1) e.price = 'At least ₹1 — online checkout can’t take a ₹0 payment';
   if (f.status === 'on-sale' && Number(f.capacity) === 0) e.capacity = 'An on-sale event needs capacity';
   const bg = f.page_background;
   if (bg && bg !== 'cover' && bg.startsWith('#') && !isDarkEnough(bg)) e.page_background = 'Pick a darker colour so the cream text stays readable.';
@@ -180,7 +183,7 @@ export const EventEditor = ({ initial, onSaved, onCancel }) => {
 
   const save = async (e) => {
     e.preventDefault();
-    const errs = validate(form, lineup);
+    const errs = validate(form, lineup, isEdit);
     setErrors(errs);
     if (Object.keys(errs).length) { setError('Check the highlighted fields.'); return; }
     setSaving(true);

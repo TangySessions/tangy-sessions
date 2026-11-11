@@ -40,7 +40,18 @@ mig(n, label, applied) as (values
   ('0033', 'artist_portal',                   to_regclass('public.application_reviews') is not null),
   ('0034', 'event_artist_workflow',           exists (select 1 from pg_proc where proname = 'artist_day_status' and pronamespace = 'public'::regnamespace)),
   ('0035', 'phase1_security_gaps',            exists (select 1 from pg_proc where proname = 'guard_application_start' and pronamespace = 'public'::regnamespace)),
-  ('0036', 'fix_artist_documents_storage',    exists (select 1 from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname = 'artist-documents: own upload' and with_check like '%foldername(objects.name)%'))
+  ('0036', 'fix_artist_documents_storage',    exists (select 1 from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname = 'artist-documents: own upload' and with_check like '%foldername(objects.name)%')),
+  ('0037', 'one_pending_hold_per_account',    to_regclass('public.bookings_one_active_hold') is not null),
+  ('0038', 'no_booking_after_event_date',     to_regprocedure('public.event_booking_closed(date,text,text,timestamptz)') is not null),
+  ('0039', 'no_zero_price_ticket_types',      to_regprocedure('public.enforce_ticket_type_price()') is not null),
+  ('0040', 'artist_self_edit_guard',          to_regprocedure('public.guard_artist_self_edit()') is not null),
+  ('0041', 'storage_lifecycle_guards',        to_regprocedure('public.has_open_artist_application()') is not null),
+  ('0042', 'public_artist_display_name',      coalesce(pg_get_viewdef(to_regclass('public.public_artists')) like '%COALESCE(NULLIF(btrim(stage_name)%', false)),
+  ('0043', 'atomic_programme_sessions',       to_regprocedure('public.set_programme_sessions(uuid,uuid[])') is not null),
+  ('0044', 'waitlist_event_local_date',       exists (select 1 from pg_proc where proname = 'join_waitlist' and prosrc like '%event_booking_closed%')),
+  ('0045', 'public_artists_read_only',        coalesce((select not has_any_column_privilege('anon', c.oid, 'UPDATE') and not has_table_privilege('anon', c.oid, 'DELETE')
+                                                         and not has_any_column_privilege('authenticated', c.oid, 'UPDATE') and not has_table_privilege('authenticated', c.oid, 'DELETE')
+                                                       from pg_class c where c.oid = to_regclass('public.public_artists')), false))
 ),
 user_schemas as (
   select nspname from pg_namespace

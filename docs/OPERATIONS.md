@@ -196,8 +196,8 @@ migration, RLS, a policy, a function, a trigger or the schema.
 | `razorpay-create-order` | browser (`src/lib/bookingService.js`) | keep (default) | yes — after `auth.getUser()`, to read the event and call `create_pending_booking` (service-role only) | Razorpay Orders API | checkout |
 | `razorpay-verify-payment` | browser (`bookingService.js`) | keep | yes — after `auth.getUser()` + own-booking check, to call `settle_payment` (service-role only) | none (HMAC with `RAZORPAY_KEY_SECRET`) | checkout |
 | `razorpay-webhook` | Razorpay | **off** (`--no-verify-jwt`): Razorpay sends no Supabase JWT; the function verifies `X-Razorpay-Signature` itself | yes — after the signature check | none | payment source of truth |
-| `send-ticket-email` | browser after a verified payment (no-op when the email is already queued); admin "resend" (`Bookings.jsx`, always sends) | keep | yes — after `auth.getUser()` + owner/team check | Resend; `qrcode` from esm.sh | ticket email resend / fallback |
-| `send-approval-email` | admin (`src/services/notificationService.js`) | keep | yes — after `auth.getUser()` + admin role check | Resend | application decisions |
+| `send-ticket-email` | browser after a verified payment (no-op when the email is already queued); admin "resend" (`Bookings.jsx`, always sends) | keep | yes — after `auth.getUser()` + owner / active admin / active staff assigned to the booking's event | Resend; `qrcode` from esm.sh | ticket email resend / fallback |
+| `send-approval-email` | admin (`src/services/notificationService.js`) | keep | yes — after `auth.getUser()` + active admin role check | Resend | application decisions |
 | `admin-invite-user` | admin (`src/admin/api.js`) | keep | **no** — runs entirely under the inviter's JWT | Resend | console invitations |
 | `send-notification-emails` | scheduler (§2a) | **off** (`--no-verify-jwt`): checks `x-cron-secret` (or the service key) itself | yes — after that check | Resend | notification email |
 
@@ -208,7 +208,7 @@ before doing anything.
 ### Secrets — exact names read by the code
 
 Edge Function secrets (`supabase secrets set NAME=value`). **None of them may
-be a `VITE_` variable or appear in Vercel**: `vite build` refuses a Supabase
+be a `VITE_` variable or appear in the hosting build environment (Vercel / Azure)**: `vite build` refuses a Supabase
 secret key in a `VITE_` variable, and a canary build confirms no function
 secret reaches the browser bundle.
 
@@ -227,7 +227,7 @@ secret reaches the browser bundle.
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | all functions | **Injected by Supabase — do not set.** |
 | `MAILPIT_URL` | `_shared/email.ts` | Local stack only. |
 
-Vercel (browser build) needs only `VITE_SUPABASE_URL` and
+The browser build (Vercel or Azure) needs only `VITE_SUPABASE_URL` and
 `VITE_SUPABASE_PUBLISHABLE_KEY` (or the legacy `VITE_SUPABASE_ANON_KEY`).
 `VITE_RAZORPAY_KEY_ID` is not read by the app and can stay unset.
 
@@ -289,9 +289,10 @@ this does not open them up.
 - Secret: the same value as `RAZORPAY_WEBHOOK_SECRET`.
 - Events the code handles — enable these:
   - `payment.captured` and `order.paid` — confirm the booking (`settle_payment`; either one is enough, both are safe together)
-  - `payment.failed` — releases a pending hold (a later successful retry on the same order is still accepted while seats are free)
+  - `payment.failed` — records the failed attempt (`payment_status = failed`) and keeps the pending hold, because Razorpay lets the customer retry on the same order; the hold is released by its normal expiry (`bookings.pending_timeout_minutes`) or replaced by the customer's next checkout
   - `payment.authorized` — status mirror only
-  - `refund.processed`, `refund.created` — refund mirror for reporting only
+  - `refund.processed` — refund mirror for reporting only: each refund (by refund id) is its own event, so several partial refunds on one payment all count; the mirrored total only ever increases
+  - `refund.created` — recorded only (a created refund can still fail; amounts change on `refund.processed`)
 - Responses: `200` = recorded and processed (or a duplicate of a processed
   event, or a permanent failure already recorded and alerted); `400` = bad
   signature or body; `503` = secret missing; `500` = not recorded, or a

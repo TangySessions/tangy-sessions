@@ -124,6 +124,9 @@ export const PatronDashboard = ({ overrideProfile, readOnly, demoData } = {}) =>
   const [bookings, setBookings] = useState([]);
   const [bookingsError, setBookingsError] = useState('');
   const [waitlist, setWaitlist] = useState([]);
+  // A failed waitlist read is shown as such — an offer is time-limited, so
+  // "not on any waitlist" must only ever mean exactly that.
+  const [waitlistError, setWaitlistError] = useState(false);
   const [settingsForm, setSettingsForm] = useState({ fullName: '', phone: '' });
   const [savedMsg, setSavedMsg] = useState('');
   const [pwForm, setPwForm] = useState({ next: '', confirm: '' });
@@ -151,11 +154,14 @@ export const PatronDashboard = ({ overrideProfile, readOnly, demoData } = {}) =>
       // Own dashboard: my_waitlist() (position + offer, 0027). Admin preview
       // of someone else's dashboard reads their rows directly (staff RLS).
       if (readOnly) {
-        const { data } = await supabase.from('waitlist').select('id, status, quantity, offer_expires_at, events(name, slug, event_date, venue)')
+        const { data, error: wlError } = await supabase.from('waitlist').select('id, status, quantity, offer_expires_at, events(name, slug, event_date, venue)')
           .eq('user_id', user.id).in('status', ['waiting', 'offered']);
+        setWaitlistError(!!wlError);
         setWaitlist((data || []).map((w) => ({ ...w, event_name: w.events?.name, event_slug: w.events?.slug, event_date: w.events?.event_date, venue: w.events?.venue })));
       } else {
-        const { data } = await supabase.rpc('my_waitlist');
+        const { data, error: wlError } = await supabase.rpc('my_waitlist');
+        if (wlError) console.error('[tangy] my_waitlist failed', wlError);
+        setWaitlistError(!!wlError);
         setWaitlist((data || []).filter((w) => ['waiting', 'offered'].includes(w.status)));
       }
     }
@@ -288,7 +294,7 @@ export const PatronDashboard = ({ overrideProfile, readOnly, demoData } = {}) =>
             </div>
             <div className="bg-[#E7D5A4] text-[#11100C] border-2 border-[#11100C] p-5 shadow-[4px_4px_0px_#11100C]">
               <span className="font-mono text-[9px] font-bold uppercase text-[#B94717]">Waitlist</span>
-              <div className="font-condensed text-4xl font-bold mt-1">{waitlist.length}</div>
+              <div className="font-condensed text-4xl font-bold mt-1">{waitlistError ? '—' : waitlist.length}</div>
               <p className="font-mono text-[10px] text-[#11100C]/60 mt-1">sessions you're waiting on</p>
             </div>
             <div className="sm:col-span-3 bg-[#191410] border-2 border-[#C99A2E]/40 p-5">
@@ -376,7 +382,12 @@ export const PatronDashboard = ({ overrideProfile, readOnly, demoData } = {}) =>
         {activeTab === 'waitlist' && (
           <div>
             <h3 className="font-condensed text-lg font-bold uppercase mb-3">Waitlist Status</h3>
-            {waitlist.length === 0 ? (
+            {waitlistError ? (
+              <div role="alert" data-waitlist-error className="p-3 border-2 border-[#11100C] bg-[#B5532A] text-[#ecdcaf] font-mono text-[11px] flex items-center gap-3">
+                <span className="flex-1">We couldn't load your waitlist right now. If you're expecting a seat offer, check again in a moment.</span>
+                <button type="button" onClick={load} className="px-3 py-1 border-2 border-[#ecdcaf] uppercase text-[10px]">Retry</button>
+              </div>
+            ) : waitlist.length === 0 ? (
               <Empty>YOU'RE NOT ON ANY WAITLISTS RIGHT NOW. WHEN A SESSION SELLS OUT, YOU CAN JOIN ITS WAITLIST FROM THE SESSION PAGE.</Empty>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

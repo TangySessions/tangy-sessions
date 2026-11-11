@@ -174,9 +174,9 @@ const check = (cond, label) => { print(`${cond ? 'PASS' : 'FAIL'}  ${label}`); i
 const fresh = () => {
   reset(); mail.length = 0; resendFails = false; faults.outboxInsert = 0;
   customer = id(); admin = id(); stranger = id(); event = id();
-  db.profiles.push({ id: customer, email: 'asha@customer.test', full_name: 'Asha', role: 'patron' },
-    { id: admin, email: 'ops@tangy.test', full_name: 'Ops', role: 'admin' },
-    { id: stranger, email: 'other@customer.test', full_name: 'Other', role: 'patron' });
+  db.profiles.push({ id: customer, email: 'asha@customer.test', full_name: 'Asha', role: 'patron', is_active: true },
+    { id: admin, email: 'ops@tangy.test', full_name: 'Ops', role: 'admin', is_active: true },
+    { id: stranger, email: 'other@customer.test', full_name: 'Other', role: 'patron', is_active: true });
   db.events.push({ id: event, name: 'Stepwell Night', event_date: '2026-12-01', event_time: '19:00', venue: 'Stepwell' });
 };
 

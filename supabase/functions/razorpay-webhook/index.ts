@@ -8,7 +8,12 @@
 //
 // Idempotency: Razorpay explicitly documents that the same webhook event can
 // be delivered more than once, so every event is recorded in
-// payment_webhook_events keyed by a unique id before being acted on.
+// payment_webhook_events keyed by a unique id before being acted on. The id
+// comes from the signed body: `<event>:<payment id>` for payment/order
+// events (one capture / failure per payment), `<event>:<refund id>` for
+// refund events — a payment can be refunded in several parts, and each part
+// is its own event. (The X-Razorpay-Event-Id header is not covered by the
+// signature, so it is not used to deduplicate.)
 //
 // Status codes: 200 only when the event is recorded and either processed or
 // its permanent failure recorded (or it is a duplicate of a processed event).
@@ -67,7 +72,11 @@ Deno.serve(async (req) => {
     const eventType: string = payload.event;
     const paymentEntity = payload.payload?.payment?.entity;
     const orderEntity = payload.payload?.order?.entity;
-    const eventId: string | undefined = paymentEntity?.id ? `${eventType}:${paymentEntity.id}` : undefined;
+    const refundEntity = payload.payload?.refund?.entity;
+    const isRefundEvent = typeof eventType === 'string' && eventType.startsWith('refund.');
+    const eventId: string | undefined = isRefundEvent
+      ? (refundEntity?.id ? `${eventType}:${refundEntity.id}` : undefined)
+      : (paymentEntity?.id ? `${eventType}:${paymentEntity.id}` : undefined);
 
     if (!eventId) {
       // Nothing stable to dedupe on — log and accept so Razorpay doesn't retry forever.
@@ -98,7 +107,6 @@ Deno.serve(async (req) => {
     }
 
     const orderId = paymentEntity?.order_id ?? orderEntity?.id;
-    const refundEntity = payload.payload?.refund?.entity;
     const now = new Date().toISOString();
     // retryable: a database call failed — worth another delivery.
     // permanent: the event is understood but cannot apply — another delivery would not help.
@@ -125,33 +133,68 @@ Deno.serve(async (req) => {
         if (!queued.ok) retryable.push(`ticket email not queued: ${queued.reason}`);
       }
     } else if (eventType === 'payment.authorized' && orderId) {
+      // A new attempt after a failed one is authorized too.
       const { error } = await admin.from('bookings')
         .update({ payment_status: 'authorized', payment_updated_at: now })
-        .eq('razorpay_order_id', orderId).eq('payment_status', 'created');
+        .eq('razorpay_order_id', orderId).eq('status', 'pending').in('payment_status', ['created', 'failed']);
       if (error) retryable.push(`authorize update failed: ${error.message}`);
     } else if (eventType === 'payment.failed' && orderId) {
+      // One failed ATTEMPT, not a failed checkout: Razorpay lets the customer
+      // retry on the same order (same window, or "Try again", which resumes
+      // this hold). So the hold keeps its seats — it is released by the normal
+      // expiry (expire_stale_bookings, bookings.pending_timeout_minutes) or
+      // replaced by the account's next checkout (0037). Releasing it here let
+      // someone else take the seats before the retry was paid, which put a
+      // successful payment into needs_review for a refund.
       const { error: failError } = await admin
         .from('bookings')
-        .update({ status: 'failed', payment_status: 'failed', payment_updated_at: now })
+        .update({ payment_status: 'failed', payment_updated_at: now })
         .eq('razorpay_order_id', orderId)
-        .eq('status', 'pending'); // never overwrite an already-confirmed booking
+        .eq('status', 'pending'); // never touch a confirmed / expired / cancelled booking
 
       if (failError) retryable.push(`booking fail-update failed: ${failError.message}`);
-    } else if ((eventType === 'refund.processed' || eventType === 'refund.created') && (refundEntity?.payment_id || paymentEntity?.id)) {
+    } else if (eventType === 'refund.processed' && refundEntity?.payment_id) {
       // Refunds are issued manually in the Razorpay dashboard. This only
       // mirrors the refunded amount onto the booking for reporting; the
-      // booking's status changes when an admin records the refund.
-      const paymentId = refundEntity?.payment_id ?? paymentEntity?.id;
-      const refunded = Number(paymentEntity?.amount_refunded ?? refundEntity?.amount ?? 0);
-      const total = Number(paymentEntity?.amount ?? 0);
-      const { error } = await admin.from('bookings')
-        .update({
-          refunded_amount: Math.round(refunded / 100),
-          payment_status: total > 0 && refunded < total ? 'partially_refunded' : 'refunded',
-          payment_updated_at: now,
-        })
-        .eq('razorpay_payment_id', paymentId);
-      if (error) retryable.push(`refund mirror failed: ${error.message}`);
+      // booking's status changes when an admin records the refund. Only
+      // `processed` moves money (a `created` refund can still fail), so only it
+      // is mirrored. The amount refunded so far is the larger of Razorpay's
+      // own running total (payment.amount_refunded, when the payment entity is
+      // included) and the sum of every distinct processed refund recorded for
+      // this payment — and it only ever goes up, so out-of-order or concurrent
+      // deliveries cannot lower it, and a redelivery changes nothing.
+      const paymentId: string = refundEntity.payment_id;
+      const { data: booking, error: bookingError } = await admin.from('bookings')
+        .select('id, amount, refunded_amount').eq('razorpay_payment_id', paymentId).maybeSingle();
+      const { data: recorded, error: recordedError } = await admin.from('payment_webhook_events')
+        .select('event_id, payload').eq('event_type', 'refund.processed').eq('payload->payload->refund->entity->>payment_id', paymentId);
+      if (bookingError || recordedError) {
+        retryable.push(`refund mirror read failed: ${(bookingError ?? recordedError)?.message}`);
+      } else if (!booking) {
+        console.warn('razorpay-webhook: refund for a payment with no booking', paymentId);
+      } else {
+        const byRefund = new Map<string, number>();
+        for (const row of recorded ?? []) {
+          const r = row.payload?.payload?.refund?.entity;
+          if (r?.id) byRefund.set(r.id, Number(r.amount ?? 0));
+        }
+        byRefund.set(refundEntity.id, Number(refundEntity.amount ?? 0));
+        const summed = [...byRefund.values()].reduce((a, b) => a + b, 0);
+        const refundedPaise = Math.max(summed, Number(paymentEntity?.amount_refunded ?? 0));
+        const totalPaise = Number(booking.amount) * 100;
+        const refundedRupees = Math.round(refundedPaise / 100);
+        if (refundedRupees > Number(booking.refunded_amount ?? 0)) {
+          const { error } = await admin.from('bookings')
+            .update({
+              refunded_amount: refundedRupees,
+              payment_status: totalPaise > 0 && refundedPaise < totalPaise ? 'partially_refunded' : 'refunded',
+              payment_updated_at: now,
+            })
+            .eq('id', booking.id)
+            .lt('refunded_amount', refundedRupees); // a concurrent, larger total wins
+          if (error) retryable.push(`refund mirror failed: ${error.message}`);
+        }
+      }
     }
 
     const failures = [...retryable, ...permanent];

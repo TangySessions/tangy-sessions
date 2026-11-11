@@ -9,6 +9,17 @@ import { Panel, Button, Input, Field, Badge, Modal, fmt, useToast } from '../ui'
 // events.price follows the cheapest active type automatically. Types that
 // have been sold are deactivated rather than deleted, so history stays intact.
 const CODE_RE = /^[a-z][a-z0-9_]{0,31}$/;
+// Online checkout can't take ₹0 (Razorpay), so a type costs at least ₹1 —
+// also enforced by the database (0039). A legacy ₹0 type can still be edited
+// without touching its price or putting it back on sale (e.g. taken off sale).
+const MIN_PRICE = 1;
+const priceError = (editing, price) => {
+  if (!Number.isFinite(price) || !Number.isInteger(price) || price < 0 || price > 1000000) return 'Whole rupees, ₹1 – ₹10,00,000.';
+  if (price >= MIN_PRICE) return null;
+  const o = editing.original;
+  const legacyUntouched = o && Number(o.price) === price && !(editing.active && !o.active);
+  return legacyUntouched ? null : 'At least ₹1 — online checkout can’t take a ₹0 payment. Free tickets aren’t supported.';
+};
 const blank = { id: null, code: '', name: '', description: '', price: '', capacity: '', sort_order: 0, active: true };
 
 export function TicketTypesEditor({ evt, counts, canManage }) {
@@ -29,8 +40,9 @@ export function TicketTypesEditor({ evt, counts, canManage }) {
     const e = {};
     if (!editing.name.trim()) e.name = 'A name is required.';
     if (!editing.id && !CODE_RE.test(editing.code)) e.code = 'Lowercase letters, numbers and _ (starts with a letter).';
-    const price = Number(editing.price);
-    if (!Number.isFinite(price) || price < 0 || price > 1000000 || !Number.isInteger(price)) e.price = 'Whole rupees, 0 – 10,00,000.';
+    const price = editing.price === '' ? NaN : Number(editing.price);
+    const pe = priceError(editing, price);
+    if (pe) e.price = pe;
     const capacity = editing.capacity === '' ? null : Number(editing.capacity);
     if (capacity != null && (!Number.isInteger(capacity) || capacity < 0)) e.capacity = 'Leave empty for no separate limit.';
     setErrors(e);
@@ -71,6 +83,7 @@ export function TicketTypesEditor({ evt, counts, canManage }) {
                   <td className="px-4 py-2.5 text-[#EFE2C0]">
                     {t.name} <span className="font-mono text-[10px] text-[#E7D5A4]/60">{t.code}</span>
                     {!t.active && <span className="ml-2"><Badge status="archived">Not on sale</Badge></span>}
+                    {t.active && t.price < MIN_PRICE && <span className="ml-2" data-zero-price><Badge tone="bad">₹0 — not sellable</Badge></span>}
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums">{fmt.money(t.price)}</td>
                   <td className="px-4 py-2.5 text-right tabular-nums text-[#E7D5A4]/60">{types.data?.quotes[t.code] ? fmt.money(types.data.quotes[t.code].total) : '—'}</td>
@@ -78,7 +91,7 @@ export function TicketTypesEditor({ evt, counts, canManage }) {
                   <td className="px-4 py-2.5 text-right tabular-nums">{fmt.num(c.issued)}</td>
                   <td className="px-4 py-2.5 text-right tabular-nums">{fmt.num(c.checked_in)}</td>
                   <td className="px-4 py-2.5 text-right">
-                    {canManage && <Button size="sm" variant="ghost" icon="Pencil" aria-label={`Edit ${t.name}`} onClick={() => { setErrors({}); setEditing({ ...t, description: t.description || '', capacity: t.capacity ?? '', price: String(t.price) }); }} />}
+                    {canManage && <Button size="sm" variant="ghost" icon="Pencil" aria-label={`Edit ${t.name}`} onClick={() => { setErrors({}); setEditing({ ...t, description: t.description || '', capacity: t.capacity ?? '', price: String(t.price), original: t }); }} />}
                   </td>
                 </tr>
               );
@@ -98,7 +111,7 @@ export function TicketTypesEditor({ evt, counts, canManage }) {
           {!editing.id && <Field label="Code *" hint="Stored on bookings and tickets; can't be changed later." error={errors.code}><Input value={editing.code} onChange={(e) => setEditing({ ...editing, code: e.target.value.toLowerCase() })} maxLength={32} /></Field>}
           <Field label="Description"><Input value={editing.description} onChange={(e) => setEditing({ ...editing, description: e.target.value })} maxLength={300} /></Field>
           <div className="grid grid-cols-3 gap-3">
-            <Field label="Price (₹) *" error={errors.price}><Input inputMode="numeric" value={editing.price} onChange={(e) => setEditing({ ...editing, price: e.target.value })} /></Field>
+            <Field label="Price (₹) *" hint="₹1 or more" error={errors.price}><Input inputMode="numeric" value={editing.price} onChange={(e) => setEditing({ ...editing, price: e.target.value })} /></Field>
             <Field label="Limit" hint="Optional" error={errors.capacity}><Input inputMode="numeric" value={editing.capacity} onChange={(e) => setEditing({ ...editing, capacity: e.target.value })} /></Field>
             <Field label="Order"><Input inputMode="numeric" value={editing.sort_order} onChange={(e) => setEditing({ ...editing, sort_order: e.target.value })} /></Field>
           </div>

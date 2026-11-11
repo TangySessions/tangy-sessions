@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { deployTarget, assertBackendConfigured, reviewMode as reviewModeFor, demoAdmin as demoAdminFor } from './build-guards.js'
 
 // DEVELOPMENT-ONLY: the admin console's dev role switcher (src/admin/dev/).
 // `__TANGY_DEV_TOOLS__` is true only for `vite` (serve). Every `vite build`
@@ -111,65 +112,25 @@ function assertNoSecretInBrowserEnv(env) {
   }
 }
 
-// A bundle without the Supabase URL and public key can't sign anyone in,
-// book, or submit a form, so a build without them fails instead of shipping
-// a site that only looks alive. TANGY_ALLOW_UNCONFIGURED_BUILD=1 allows a
-// local smoke build without a backend (never on a Vercel production deploy).
-function assertBackendConfigured(env) {
-  const url = env.VITE_SUPABASE_URL
-  const key = env.VITE_SUPABASE_PUBLISHABLE_KEY || env.VITE_SUPABASE_ANON_KEY
-  const production = process.env.VERCEL_ENV === 'production'
-  let problem = null
-  if (!url || !key) {
-    problem = 'VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY (or VITE_SUPABASE_ANON_KEY) must be set for a build'
-  } else {
-    let parsed = null
-    try { parsed = new URL(url) } catch { /* reported below */ }
-    const local = parsed && ['localhost', '127.0.0.1'].includes(parsed.hostname)
-    if (!parsed || !['https:', 'http:'].includes(parsed.protocol)) problem = `VITE_SUPABASE_URL is not a valid URL: ${url}`
-    else if (parsed.protocol === 'http:' && !local) problem = 'VITE_SUPABASE_URL must use https (http is allowed only for a local Supabase stack)'
-    else if (production && local) problem = 'VITE_SUPABASE_URL points at a local Supabase stack on a Vercel production deployment'
-  }
-  if (!problem) return
-  if (env.TANGY_ALLOW_UNCONFIGURED_BUILD === '1' && !production) {
-    console.warn(`\n[tangy] ${problem} — building anyway (TANGY_ALLOW_UNCONFIGURED_BUILD=1). This bundle has no working backend: never deploy it.\n`)
-    return
-  }
-  throw new Error(`[tangy] ${problem}. See .env.example.`)
-}
-
 // https://vite.dev/config/
 export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   assertNoSecretInBrowserEnv(env)
-  if (command === 'build') assertBackendConfigured(env)
+  // Production unless the build explicitly says otherwise (build-guards.js) —
+  // the same on Vercel, Azure or any other host.
+  const target = deployTarget(env)
+  const warn = (msg) => msg && console.warn(`\n[tangy] ${msg}\n`)
+  if (command === 'build') warn(assertBackendConfigured(env, target))
   // Feature guards below switch the feature OFF in the bundle (with a warning)
   // instead of failing the build, so a stray hosting variable can never break
   // a deployment and can never ship a demo login either. (A missing backend
   // or a secret in a VITE_ variable, above, does fail.)
-  const warn = (msg) => console.warn(`\n[tangy] ${msg}\n`)
-  // The demo admin entry must never ship: a build compiles VITE_DEMO_ADMIN_ENABLED
-  // to false unless someone deliberately builds a demo bundle (TANGY_ALLOW_DEMO_BUILD=1).
-  const demoAdmin = env.VITE_DEMO_ADMIN_ENABLED === 'true'
-    && (command === 'serve' || env.TANGY_ALLOW_DEMO_BUILD === '1')
-  if (command === 'build' && env.VITE_DEMO_ADMIN_ENABLED === 'true' && !demoAdmin) {
-    warn('VITE_DEMO_ADMIN_ENABLED=true ignored: the demo admin is compiled out of this build. Unset it, or set TANGY_ALLOW_DEMO_BUILD=1 for a deliberate local demo build.')
-  }
-  // TEAM REVIEW MODE (temporary review deployments only): a one-click demo
-  // login for disposable demo accounts. Off unless VITE_TEAM_REVIEW_MODE=true
-  // and VITE_TEAM_REVIEW_PASSWORD is set (hosting settings, never Git); always
-  // off on a Vercel *production* deployment unless TANGY_ALLOW_REVIEW_BUILD=1 is
-  // set on purpose. When off, the screen is compiled out.
-  let reviewMode = env.VITE_TEAM_REVIEW_MODE === 'true'
-  if (command === 'build' && reviewMode) {
-    if (process.env.VERCEL_ENV === 'production' && env.TANGY_ALLOW_REVIEW_BUILD !== '1') {
-      warn('VITE_TEAM_REVIEW_MODE=true ignored on a production deployment: the team-review demo login is compiled out. Deploy the review branch as a Preview, or set TANGY_ALLOW_REVIEW_BUILD=1 deliberately for a temporary review project.')
-      reviewMode = false
-    } else if (!env.VITE_TEAM_REVIEW_PASSWORD) {
-      warn('VITE_TEAM_REVIEW_MODE=true ignored: VITE_TEAM_REVIEW_PASSWORD (the review demo accounts\' password) is not set.')
-      reviewMode = false
-    }
-  }
+  const demo = demoAdminFor(env, target, command)
+  warn(command === 'build' && demo.warning)
+  const review = reviewModeFor(env, target, command)
+  warn(review.warning)
+  const demoAdmin = demo.enabled
+  const reviewMode = review.enabled
   return {
     plugins: [react(), tailwindcss(), devMockSession(env)],
     // TANGY_DEV_TOOLS=off serves a dev build without the switcher (used by e2e/).

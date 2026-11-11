@@ -36,7 +36,7 @@ n=0; for f in $B/0*.sql; do
   esac
 done
 pass "$n unchanged copies are byte-identical to supabase/migrations/"
-[ "$(ls $B/0*.sql | wc -l)" = "35" ] && pass "35 migration files (0001-0036 without 0004)" || bad "expected 35 files"
+[ "$(ls $B/0*.sql | wc -l)" = "44" ] && pass "44 migration files (0001-0045 without 0004)" || bad "expected 44 files"
 
 echo "== 2. apply to a fresh local database"
 as_pg "$PG_BIN/initdb -D '$WORK/data' -U postgres --auth=trust" >/dev/null || exit 1
@@ -48,7 +48,7 @@ for f in $B/0*.sql; do
   out=$(P -1 -f "$f" 2>&1) || { bad "$(basename "$f") failed: $(echo "$out" | grep -m1 ERROR)"; exit 1; }
   applied=$((applied + 1))
 done
-pass "applied $applied files in order (0001-0003, 0005-0036)"
+pass "applied $applied files in order (0001-0003, 0005-0045)"
 
 echo "== 3. production inventory (read-only) and empty-database checks"
 P -A -F ' | ' -t -c "begin transaction read only" -f $B/checks/production_inventory.readonly.sql -c "rollback" | sed 's/^/   /'
@@ -80,6 +80,15 @@ chk "select has_function_privilege('anon', 'content_can(text,text)', 'execute') 
 chk "select exists (select 1 from pg_proc where proname = 'artist_day_status' and pronamespace = 'public'::regnamespace)" t "0034 detected"
 chk "select exists (select 1 from pg_proc where proname = 'guard_application_start' and pronamespace = 'public'::regnamespace)" t "0035 detected"
 chk "select count(*) from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname like 'artist-documents: own %' and coalesce(qual, with_check) like '%foldername(objects.name)%'" 3 "0036 detected: artist-documents own policies read the folder from storage.objects.name"
+chk "select to_regclass('public.bookings_one_active_hold') is not null and exists (select 1 from pg_proc where proname = 'create_pending_booking' and prosrc like '%tangy.booking_hold%')" t "0037 detected: one active hold per account (index + serialized create_pending_booking)"
+chk "select to_regprocedure('event_booking_closed(date,text,text,timestamptz)') is not null and exists (select 1 from pg_proc where proname = 'create_pending_booking' and prosrc like '%EVENT_CLOSED%')" t "0038 detected: no booking after the session's local date"
+chk "select exists (select 1 from pg_trigger where tgname = 'event_ticket_types_price_min' and tgrelid = 'public.event_ticket_types'::regclass)" t "0039 detected: no ₹0 ticket types (minimum-price trigger)"
+chk "select exists (select 1 from pg_trigger where tgname = 'artists_guard_self_edit' and tgrelid = 'public.artists'::regclass)" t "0040 detected: artists cannot edit review / identity fields of their own row"
+chk "select to_regprocedure('public.has_open_artist_application()') is not null and exists (select 1 from pg_policies where schemaname = 'storage' and policyname = 'sponsor-assets: delete' and qual like '%sponsor_assets%')" t "0041 detected: storage follows the review lifecycle"
+chk "select pg_get_viewdef('public.public_artists'::regclass) like '%COALESCE(NULLIF(btrim(stage_name)%'" t "0042 detected: public_artists shows the public name"
+chk "select to_regprocedure('public.set_programme_sessions(uuid,uuid[])') is not null" t "0043 detected: atomic programme sessions"
+chk "select exists (select 1 from pg_proc where proname = 'join_waitlist' and prosrc like '%event_booking_closed%')" t "0044 detected: waitlist uses the event-local date"
+chk "select has_table_privilege('anon', 'public.public_artists', 'SELECT') and has_table_privilege('authenticated', 'public.public_artists', 'SELECT') and not has_any_column_privilege('anon', 'public.public_artists', 'UPDATE') and not has_table_privilege('anon', 'public.public_artists', 'DELETE') and not has_any_column_privilege('authenticated', 'public.public_artists', 'UPDATE') and not has_table_privilege('authenticated', 'public.public_artists', 'DELETE')" t "0045 detected: public_artists is read-only for anon / authenticated (SELECT kept)"
 
 echo "== 4. test suites (no seed or mock content inserted)"
 total=0; failed=""
