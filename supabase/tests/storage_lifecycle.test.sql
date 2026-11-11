@@ -10,6 +10,12 @@
 \set ON_ERROR_STOP 1
 \set QUIET 1
 begin;
+-- Newer Supabase Storage refuses SQL deletes on storage.objects unless the
+-- session sets this flag, which the Storage API itself does before deleting
+-- (RLS delete policies still apply). Set for this transaction only, as
+-- artist_storage / artist_documents_storage do, so refusals below come from
+-- RLS and not from that guard.
+select set_config('storage.allow_delete_query', 'true', true);
 
 create schema tt;
 create function tt.check(p_cond boolean, p_label text) returns void language plpgsql as $$

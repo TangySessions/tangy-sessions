@@ -106,35 +106,39 @@ export default function ReportsPage() {
         {can(P.PAYMENTS) && (
           <Panel title="Revenue by month" subtitle="Confirmed bookings by booking date" flush>
             <AsyncBlock loading={revenue.loading} error={revenue.error} onRetry={revenue.reload} empty={(revenue.data || []).length === 0} emptyProps={{ title: 'No bookings in this period', icon: 'BarChart3' }}>
-              <table className="w-full text-[13px]">
-                <thead><tr className="border-b border-[#C99A2E]/20"><Th>Month</Th><Th>Revenue</Th><Th right>Bookings</Th><Th right>Tickets</Th><Th right>Refunded</Th></tr></thead>
-                <tbody>
-                  {(revenue.data || []).map((r) => (
-                    <tr key={r.month} className="border-b border-[#E7D5A4]/[0.06]">
-                      <Td className="font-mono text-[12px]">{new Date(`${r.month}T00:00:00`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}</Td>
-                      <Td><InlineBar value={Number(r.revenue)} max={maxRevenue} label={fmt.money(r.revenue)} /></Td>
-                      <Td right>{fmt.num(r.bookings)}</Td><Td right>{fmt.num(r.tickets)}</Td><Td right>{fmt.money(r.refunded)}</Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead><tr className="border-b border-[#C99A2E]/20"><Th>Month</Th><Th>Revenue</Th><Th right>Bookings</Th><Th right>Tickets</Th><Th right>Refunded</Th></tr></thead>
+                  <tbody>
+                    {(revenue.data || []).map((r) => (
+                      <tr key={r.month} className="border-b border-[#E7D5A4]/[0.06]">
+                        <Td className="font-mono text-[12px]">{new Date(`${r.month}T00:00:00`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}</Td>
+                        <Td><InlineBar value={Number(r.revenue)} max={maxRevenue} label={fmt.money(r.revenue)} /></Td>
+                        <Td right>{fmt.num(r.bookings)}</Td><Td right>{fmt.num(r.tickets)}</Td><Td right>{fmt.money(r.refunded)}</Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </AsyncBlock>
           </Panel>
         )}
         {can(P.APPLICATIONS_VIEW) && (
           <Panel title="Applications" subtitle="By submission date" flush actions={<Button size="sm" variant="ghost" to="/admin-portal/applications">Open</Button>}>
             <AsyncBlock loading={apps.loading} error={apps.error} onRetry={apps.reload} empty={(apps.data || []).length === 0} emptyProps={{ title: 'No applications in this period', icon: 'Inbox' }}>
-              <table className="w-full text-[13px]">
-                <thead><tr className="border-b border-[#C99A2E]/20"><Th>Type</Th><Th right>Pending</Th><Th right>Approved</Th><Th right>Rejected</Th><Th right>Avg. review time</Th></tr></thead>
-                <tbody>
-                  {(apps.data || []).map((a) => (
-                    <tr key={a.type} className="border-b border-[#E7D5A4]/[0.06]">
-                      <Td className="capitalize">{a.type}</Td><Td right>{fmt.num(a.pending)}</Td><Td right>{fmt.num(a.approved)}</Td><Td right>{fmt.num(a.rejected)}</Td>
-                      <Td right>{a.avg_review_hours != null ? (a.avg_review_hours < 48 ? `${a.avg_review_hours} h` : `${(a.avg_review_hours / 24).toFixed(1)} d`) : '—'}</Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead><tr className="border-b border-[#C99A2E]/20"><Th>Type</Th><Th right>Pending</Th><Th right>Approved</Th><Th right>Rejected</Th><Th right>Avg. review time</Th></tr></thead>
+                  <tbody>
+                    {(apps.data || []).map((a) => (
+                      <tr key={a.type} className="border-b border-[#E7D5A4]/[0.06]">
+                        <Td className="capitalize">{a.type}</Td><Td right>{fmt.num(a.pending)}</Td><Td right>{fmt.num(a.approved)}</Td><Td right>{fmt.num(a.rejected)}</Td>
+                        <Td right>{a.avg_review_hours != null ? (a.avg_review_hours < 48 ? `${a.avg_review_hours} h` : `${(a.avg_review_hours / 24).toFixed(1)} d`) : '—'}</Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </AsyncBlock>
           </Panel>
         )}

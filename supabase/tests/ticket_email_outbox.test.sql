@@ -11,6 +11,12 @@
 \set ON_ERROR_STOP 1
 \set QUIET 1
 begin;
+-- claim_email_batch hands out the OLDEST queued rows first. On a local
+-- database with no email provider, earlier runs leave queued rows behind,
+-- so the batch would never reach this suite's rows. Start from an empty
+-- outbox inside this transaction (rolled back at the end, like the other
+-- suites that clear email_outbox).
+delete from email_outbox;
 
 create schema tt;
 create function tt.check(p_cond boolean, p_label text) returns void language plpgsql as $$

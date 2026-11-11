@@ -201,9 +201,23 @@ const orderId = `order_e2e_${randomBytes(6).toString('hex')}`;
 const paymentId = `pay_e2e_${randomBytes(6).toString('hex')}`;
 const failedCode = sql(`select registration_code from bookings where event_id = '${V6}' and attendee_email = 'patron@tangy.test' order by created_at asc limit 1`);
 {
-  // What Razorpay's order API returns (unreachable locally): the order id on the pending booking.
-  sql(`update bookings set status = 'pending', razorpay_order_id = '${orderId}' where registration_code = '${code}'`);
-  sql(`update bookings set status = 'pending', razorpay_order_id = '${orderId}_x' where registration_code = '${failedCode}'`);
+  // What Razorpay's order API returns (unreachable locally): the order id on
+  // the pending booking. One account holds at most one unpaid checkout per
+  // session (0037, bookings_one_active_hold), so the two attempts are made the
+  // pending hold one after the other.
+  //
+  // a) A failed payment ATTEMPT (0037/0038 revision): the hold keeps its seats
+  //    and stays pending so the customer can retry on the same order; only
+  //    payment_status records the failure. It is released by the normal expiry.
+  sql(`update bookings set status = 'pending', payment_status = 'created', razorpay_order_id = '${orderId}_x' where registration_code = '${failedCode}'`);
+  const fl = await webhook('payment.failed', `${orderId}_x`, `${paymentId}_f`);
+  check(fl.status === 200 && sql(`select status || '|' || payment_status from bookings where registration_code = '${failedCode}'`) === 'pending|failed'
+    && Number(sql(`select count(*) from tickets t join bookings b on b.id = t.booking_id where b.registration_code = '${failedCode}'`)) === 0,
+    'payment.failed webhook: the hold stays pending for a retry (payment_status failed), no attendees, no QR');
+  // The hold lapses (expire_stale_bookings would do this after the timeout).
+  sql(`update bookings set status = 'expired', expired_at = now() where registration_code = '${failedCode}'`);
+  // b) The successful checkout.
+  sql(`update bookings set status = 'pending', payment_status = 'created', razorpay_order_id = '${orderId}' where registration_code = '${code}'`);
   const forged = await webhook('payment.captured', orderId, paymentId, { forge: true });
   check(forged.status === 400 && sql(`select status from bookings where registration_code = '${code}'`) === 'pending', 'forged webhook signature refused; booking not confirmed');
   const ok = await webhook('payment.captured', orderId, paymentId);
@@ -215,9 +229,9 @@ const failedCode = sql(`select registration_code from bookings where event_id = 
   const dup = await webhook('payment.captured', orderId, paymentId);
   check(dup.status === 200 && /duplicate/.test(dup.text) && Number(sql(`select count(*) from tickets t join bookings b on b.id = t.booking_id where b.registration_code = '${code}'`)) === 5
     && Number(sql(`select count(*) from payment_webhook_events where event_id = 'payment.captured:${paymentId}'`)) === 1, 'duplicate webhook: recognised, no duplicate booking or attendees');
-  const fl = await webhook('payment.failed', `${orderId}_x`, `${paymentId}_f`);
-  check(fl.status === 200 && sql(`select status from bookings where registration_code = '${failedCode}'`) === 'failed'
-    && Number(sql(`select count(*) from tickets t join bookings b on b.id = t.booking_id where b.registration_code = '${failedCode}'`)) === 0, 'payment.failed webhook: attempt stays failed, no attendees, no QR');
+  // The lapsed attempt never became a booking.
+  check(Number(sql(`select count(*) from tickets t join bookings b on b.id = t.booking_id where b.registration_code = '${failedCode}'`)) === 0
+    && sql(`select status from bookings where registration_code = '${failedCode}'`) === 'expired', 'the failed, lapsed attempt has no attendees and is not a booking');
 }
 
 // ================================================================ 4. customer: booking management
